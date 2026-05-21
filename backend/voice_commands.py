@@ -13,11 +13,15 @@ _SWITCH_TO_SV_PATTERNS = (
     r"\bchange\s+to\s+swedish\b",
     r"\bspeak\s+swedish\b",
     r"\bin\s+swedish\b",
+    r"\bswitch\s+to\s+sweden\b",
+    r"\bchange\s+to\s+sweden\b",
     r"\bbyt\s+till\s+svenska\b",
     r"\bbyta\s+till\s+svenska\b",
     r"\bväxla\s+till\s+svenska\b",
     r"\bprata\s+svenska\b",
     r"\btala\s+svenska\b",
+    r"\bbyt\s+till\s+sverige\b",
+    r"\bväxla\s+till\s+sverige\b",
 )
 
 _SWITCH_TO_EN_PATTERNS = (
@@ -25,11 +29,15 @@ _SWITCH_TO_EN_PATTERNS = (
     r"\bchange\s+to\s+english\b",
     r"\bspeak\s+english\b",
     r"\bin\s+english\b",
+    r"\bswitch\s+to\s+england\b",
+    r"\bchange\s+to\s+england\b",
     r"\bbyt\s+till\s+engelska\b",
     r"\bbyta\s+till\s+engelska\b",
     r"\bväxla\s+till\s+engelska\b",
     r"\bprata\s+engelska\b",
     r"\btala\s+engelska\b",
+    r"\bbyt\s+till\s+england\b",
+    r"\bväxla\s+till\s+england\b",
 )
 
 _SV_REGEX = re.compile("|".join(_SWITCH_TO_SV_PATTERNS), re.IGNORECASE)
