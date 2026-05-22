@@ -21,7 +21,7 @@ A fully local voice assistant where you talk to an AI and get spoken responses �
 
 - **Speech-to-Text**: faster-whisper (GPU/CUDA)
 - **LLM**: Ollama with Llama 3.1:8b
-- **Text-to-Speech**: Piper TTS (Swedish `sv_SE-nst-medium` or English `en_US-amy-medium`)
+- **Text-to-Speech**: hybrid — Kokoro for English (more natural), Piper for Swedish (`sv_SE-nst-medium`); routing is automatic per language
 - **Frontend**: Next.js 14 with Web Audio API, MediaRecorder, WebSocket streaming
 - **Backend**: Python FastAPI with REST + WebSocket endpoints, WebRTC VAD
 
@@ -34,7 +34,8 @@ Target latency: <5 seconds for the full pipeline.
 - Streaming LLM token output with incremental TTS
 - Local music playback by voice command (`play song-one`, `stop the music`, or Swedish `spela låten …`, `stoppa musiken`)
 - Markdown stripping before TTS so the model doesn't read `**bold**` as "asterisk asterisk"
-- Swedish and English voices (switched via `LANGUAGE` env var)
+- Swedish and English voices, switchable at runtime by voice command ("switch to Sweden" / "byt till Sverige") or by clicking the language pill in the UI
+- Hybrid TTS routing: Kokoro for English, Piper for Swedish (see [Why hybrid TTS](#why-hybrid-tts))
 - Short-term conversation memory (last 6 turn pairs, in-process)
 
 ## Prerequisites
@@ -85,9 +86,12 @@ Environment variables (see `docker-compose.yml`):
 |-----|---------|---------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama host URL |
 | `OLLAMA_MODEL` | `llama3.1:8b` | LLM model name |
-| `PIPER_MODEL_EN` | `/app/voices/en_US-amy-medium.onnx` | English Piper voice model |
-| `PIPER_MODEL_SV` | `/app/voices/sv_SE-nst-medium.onnx` | Swedish Piper voice model |
-| `LANGUAGE` | `en` | `en` or `sv` — sets system prompt + expected voice language |
+| `PIPER_MODEL_EN` | `/app/voices/en_US-amy-medium.onnx` | English Piper voice (used as fallback if Kokoro fails) |
+| `PIPER_MODEL_SV` | `/app/voices/sv_SE-nst-medium.onnx` | Swedish Piper voice |
+| `KOKORO_MODEL` | `/app/voices/kokoro/kokoro-v1.0.onnx` | Kokoro ONNX model (English TTS) |
+| `KOKORO_VOICES` | `/app/voices/kokoro/voices-v1.0.bin` | Kokoro voice embeddings file |
+| `KOKORO_DEFAULT_VOICE` | `af_heart` | Kokoro voice ID (see [voice list](https://huggingface.co/hexgrad/Kokoro-82M)) |
+| `LANGUAGE` | `en` | `en` or `sv` — initial language (runtime-switchable) |
 | `WHISPER_MODEL` | `small` | Whisper size (`tiny`/`base`/`small`/`medium`) |
 | `MUSIC_DIR` | `/music` | Mounted music folder (change the volume in compose) |
 
@@ -160,6 +164,12 @@ ollama-voice-sv/
 ├── CLAUDE.md
 └── README.md
 ```
+
+## Why hybrid TTS
+
+Kokoro produces noticeably more natural English than Piper, but it doesn't support Swedish. Since the original goal of this project is a Swedish-first assistant (elder-care context, GDPR-bound deployment), dropping Piper isn't an option. Using two engines side-by-side is a deliberate trade-off: pick the right tool per language instead of forcing one engine to do everything.
+
+The routing layer (`backend/services/tts.py`) is small and pluggable — adding a third engine for a third language is a single dict entry. Each engine is wrapped in a `TTSEngine` adapter (`backend/services/tts_engines.py`) so call sites stay engine-agnostic. If Kokoro fails for any reason, the router falls back to Piper rather than 500ing.
 
 ## Privacy
 
