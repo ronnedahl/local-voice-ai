@@ -54,3 +54,7 @@ temp/
 
 # Docker
 ollama_data/
+
+# TTS model artifacts (downloaded, not committed)
+*.onnx
+voices-v1.0.bin

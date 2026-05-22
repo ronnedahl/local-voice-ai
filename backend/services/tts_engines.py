@@ -7,11 +7,17 @@ their own model loading, language→voice mapping, and audio format.
 
 from __future__ import annotations
 
+import io
 import re
 import subprocess
 import tempfile
+import wave
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 def clean_text_for_tts(text: str) -> str:
@@ -84,3 +90,70 @@ class PiperTTS(TTSEngine):
                 return f.read()
         finally:
             Path(output_path).unlink(missing_ok=True)
+
+
+def _float32_to_wav_bytes(samples: "np.ndarray", sample_rate: int) -> bytes:
+    """Convert a float32 mono numpy array (range [-1, 1]) to 16-bit PCM WAV bytes."""
+    import numpy as np
+
+    int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(int16.tobytes())
+    return buf.getvalue()
+
+
+class KokoroTTS(TTSEngine):
+    """Kokoro adapter via `kokoro-onnx`.
+
+    Higher-quality English than Piper. Model is lazy-loaded on first
+    `synthesize()` call so backend startup stays fast when Kokoro is unused.
+    Returns 24 kHz mono PCM WAV.
+    """
+
+    # Our short codes → Kokoro's BCP-47-ish language codes
+    _LANG_MAP = {"en": "en-us"}
+
+    def __init__(self, model_path: str, voices_path: str, default_voice: str = "af_heart"):
+        self._model_path = model_path
+        self._voices_path = voices_path
+        self._default_voice = default_voice
+        self._kokoro = None  # lazy
+
+    @property
+    def supported_languages(self) -> tuple[str, ...]:
+        return tuple(self._LANG_MAP.keys())
+
+    def _ensure_loaded(self) -> None:
+        if self._kokoro is not None:
+            return
+        for path in (self._model_path, self._voices_path):
+            if not Path(path).is_file():
+                raise FileNotFoundError(
+                    f"Kokoro model file missing: {path}. "
+                    f"Run scripts/download_kokoro_models.sh to fetch model files."
+                )
+        from kokoro_onnx import Kokoro  # heavy import, defer until needed
+
+        print(f"Loading Kokoro from {self._model_path}...")
+        self._kokoro = Kokoro(self._model_path, self._voices_path)
+        print("Kokoro model loaded")
+
+    def synthesize(self, text: str, language: str, voice: str | None = None) -> bytes:
+        cleaned = clean_text_for_tts(text)
+        if not re.search(r"\w", cleaned):
+            return b""
+        if language not in self._LANG_MAP:
+            raise ValueError(f"Kokoro doesn't support language {language!r}")
+
+        self._ensure_loaded()
+        samples, sample_rate = self._kokoro.create(
+            cleaned,
+            voice=voice or self._default_voice,
+            speed=1.0,
+            lang=self._LANG_MAP[language],
+        )
+        return _float32_to_wav_bytes(samples, sample_rate)
