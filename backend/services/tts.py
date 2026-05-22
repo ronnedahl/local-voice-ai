@@ -1,69 +1,52 @@
-"""Text-to-speech via the Piper CLI."""
+"""Public TTS API + language-based engine routing.
 
-import re
-import subprocess
-import tempfile
-from pathlib import Path
+Rest of the app calls `generate_tts_audio(text, language)` and stays
+engine-agnostic. Routing rule: English → Kokoro (more natural), Swedish →
+Piper (Kokoro doesn't support sv). Any failure on a non-Piper engine falls
+back to Piper rather than 500ing — the Swedish demo path is sacred.
+"""
 
-from config import PIPER_MODELS
+import logging
 
+from config import (
+    KOKORO_DEFAULT_VOICE,
+    KOKORO_MODEL,
+    KOKORO_VOICES,
+    PIPER_MODELS,
+)
+from services.tts_engines import KokoroTTS, PiperTTS, TTSEngine
 
-def _clean_text_for_tts(text: str) -> str:
-    """Strip markdown so Piper doesn't read '**' as 'asterisk asterisk'."""
-    # Fenced code blocks first (they can contain other markdown)
-    text = re.sub(r"```[\s\S]*?```", " ", text)
-    # Inline code: keep the text, drop the backticks
-    text = re.sub(r"`([^`]*)`", r"\1", text)
-    # Bold/italic markers (**, __, *, _)
-    text = re.sub(r"\*+", "", text)
-    text = re.sub(r"_+", "", text)
-    # Markdown headers at line start: "## Title" -> "Title"
-    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
-    # List bullets at line start: "- item", "* item", "+ item"
-    text = re.sub(r"^\s*[-+*]\s+", "", text, flags=re.MULTILINE)
-    # Link syntax: "[text](url)" -> "text"
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    # Collapse whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+logger = logging.getLogger(__name__)
+
+_piper = PiperTTS(PIPER_MODELS)
+_kokoro = KokoroTTS(KOKORO_MODEL, KOKORO_VOICES, KOKORO_DEFAULT_VOICE)
+
+_ENGINE_BY_LANGUAGE: dict[str, TTSEngine] = {
+    "en": _kokoro,
+    "sv": _piper,
+}
 
 
 def generate_tts_audio(text: str, language: str | None = None) -> bytes:
-    """Synthesize speech from text and return WAV bytes.
+    """Synthesize WAV bytes using the engine preferred for `language`.
 
-    `language` selects the Piper voice ("en" or "sv"). If omitted, the
-    current global language state is used.
-
-    Returns an empty bytes object when the input contains no word characters,
-    since Piper crashes with "# channels not specified" if no audio is produced.
+    `language` selects the voice; if omitted, the global language state is
+    used. Unknown languages fall back to Piper. If the preferred engine
+    raises, we log and retry on Piper.
     """
-    cleaned = _clean_text_for_tts(text)
-    if not re.search(r"\w", cleaned):
-        return b""
-
     if language is None:
-        from state import language_state  # local import avoids circular dep at import time
+        from state import language_state  # local import avoids circular dep
         language = language_state.get()
 
-    if language not in PIPER_MODELS:
-        raise ValueError(f"No Piper voice configured for language {language!r}")
-    model_path = PIPER_MODELS[language]
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        output_path = tmp.name
+    engine = _ENGINE_BY_LANGUAGE.get(language, _piper)
 
     try:
-        result = subprocess.run(
-            ["piper", "--model", model_path, "--output_file", output_path],
-            input=cleaned,
-            capture_output=True,
-            text=True,
-            timeout=30,
+        return engine.synthesize(text, language)
+    except Exception as e:
+        if engine is _piper:
+            raise
+        logger.warning(
+            "TTS engine failed for %r (%s); falling back to Piper: %s",
+            language, type(engine).__name__, e,
         )
-        if result.returncode != 0:
-            raise RuntimeError(f"Piper TTS failed: {result.stderr}")
-
-        with open(output_path, "rb") as f:
-            return f.read()
-    finally:
-        Path(output_path).unlink(missing_ok=True)
+        return _piper.synthesize(text, language)

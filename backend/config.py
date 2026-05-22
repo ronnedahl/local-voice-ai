@@ -23,6 +23,17 @@ PIPER_MODEL_SV = os.getenv(
 )
 PIPER_MODELS = {"en": PIPER_MODEL_EN, "sv": PIPER_MODEL_SV}
 
+# Kokoro (English TTS) — naturlig engelska, ersätter Piper-engelskan via routern
+KOKORO_MODEL = os.getenv(
+    "KOKORO_MODEL",
+    str(Path.home() / ".local/share/kokoro/kokoro-v1.0.onnx"),
+)
+KOKORO_VOICES = os.getenv(
+    "KOKORO_VOICES",
+    str(Path.home() / ".local/share/kokoro/voices-v1.0.bin"),
+)
+KOKORO_DEFAULT_VOICE = os.getenv("KOKORO_DEFAULT_VOICE", "af_heart")
+
 # Language + prompts
 LANGUAGE = os.getenv("LANGUAGE", "sv")
 SYSTEM_PROMPTS = {
