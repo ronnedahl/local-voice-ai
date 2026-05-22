@@ -1,69 +1,22 @@
-"""Text-to-speech via the Piper CLI."""
+"""Public TTS API.
 
-import re
-import subprocess
-import tempfile
-from pathlib import Path
+Thin facade over the pluggable engine layer in `services.tts_engines`. Call
+sites use `generate_tts_audio(text, language)` and stay engine-agnostic.
+"""
 
 from config import PIPER_MODELS
+from services.tts_engines import PiperTTS
 
-
-def _clean_text_for_tts(text: str) -> str:
-    """Strip markdown so Piper doesn't read '**' as 'asterisk asterisk'."""
-    # Fenced code blocks first (they can contain other markdown)
-    text = re.sub(r"```[\s\S]*?```", " ", text)
-    # Inline code: keep the text, drop the backticks
-    text = re.sub(r"`([^`]*)`", r"\1", text)
-    # Bold/italic markers (**, __, *, _)
-    text = re.sub(r"\*+", "", text)
-    text = re.sub(r"_+", "", text)
-    # Markdown headers at line start: "## Title" -> "Title"
-    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
-    # List bullets at line start: "- item", "* item", "+ item"
-    text = re.sub(r"^\s*[-+*]\s+", "", text, flags=re.MULTILINE)
-    # Link syntax: "[text](url)" -> "text"
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    # Collapse whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+_piper = PiperTTS(PIPER_MODELS)
 
 
 def generate_tts_audio(text: str, language: str | None = None) -> bytes:
     """Synthesize speech from text and return WAV bytes.
 
-    `language` selects the Piper voice ("en" or "sv"). If omitted, the
-    current global language state is used.
-
-    Returns an empty bytes object when the input contains no word characters,
-    since Piper crashes with "# channels not specified" if no audio is produced.
+    `language` selects the voice ("en" or "sv"). If omitted, the current
+    global language state is used. Returns empty bytes for word-less input.
     """
-    cleaned = _clean_text_for_tts(text)
-    if not re.search(r"\w", cleaned):
-        return b""
-
     if language is None:
-        from state import language_state  # local import avoids circular dep at import time
+        from state import language_state  # local import avoids circular dep
         language = language_state.get()
-
-    if language not in PIPER_MODELS:
-        raise ValueError(f"No Piper voice configured for language {language!r}")
-    model_path = PIPER_MODELS[language]
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        output_path = tmp.name
-
-    try:
-        result = subprocess.run(
-            ["piper", "--model", model_path, "--output_file", output_path],
-            input=cleaned,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Piper TTS failed: {result.stderr}")
-
-        with open(output_path, "rb") as f:
-            return f.read()
-    finally:
-        Path(output_path).unlink(missing_ok=True)
+    return _piper.synthesize(text, language)
